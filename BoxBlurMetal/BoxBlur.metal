@@ -173,8 +173,8 @@ void box_blur_double_pass_h(texture2d<float, access::sample> input_texture [[ te
                             constant int& kernel_size [[ buffer(1) ]],
                             uint2 xy [[ thread_position_in_grid ]]) {
   float4 sum = 0.0f;
-  for(int offsetY = -radius; offsetY <= radius; offsetY++) {
-    sum += input_texture.sample(blur_sampler, float2(xy.x, xy.y + offsetY));
+  for(int offsetX = -radius; offsetX <= radius; offsetX++) {
+    sum += input_texture.sample(blur_sampler, float2(xy.x + offsetX, xy.y));
   }
   output_texture.write(sum / kernel_size, xy);
 }
@@ -186,8 +186,8 @@ void box_blur_double_pass_v(texture2d<float, access::sample> input_texture [[ te
                             constant int& kernel_size [[ buffer(1) ]],
                             uint2 xy [[ thread_position_in_grid ]]) {
   float4 sum = 0.0f;
-  for(int offsetX = -radius; offsetX <= radius; offsetX++) {
-    sum += input_texture.sample(blur_sampler, float2(xy.x + offsetX, xy.y));
+  for(int offsetY = -radius; offsetY <= radius; offsetY++) {
+    sum += input_texture.sample(blur_sampler, float2(xy.x, xy.y + offsetY));
   }
   output_texture.write(sum / kernel_size, xy);
 }

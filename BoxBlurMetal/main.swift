@@ -14,6 +14,10 @@ struct RunStat: Hashable, Equatable {
   let label: String
   let radius: Int
   let elapsedTime: CFTimeInterval
+  
+  var csvString: String {
+    "\(label);\(radius);\(elapsedTime);\n"
+  }
 }
 
 let device = MTLCreateSystemDefaultDevice()!
@@ -43,7 +47,7 @@ let outputTexture = device.makeTexture(descriptor: outputTextureDescriptor)!
 
 // MARK: Temporary Texture
 let tempTextureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
-  pixelFormat: .rgba8Unorm,
+  pixelFormat: .rgba32Float,
   width: inputTexture.width,
   height: inputTexture.height,
   mipmapped: false
@@ -139,6 +143,48 @@ computePipelineDescriptor.computeFunction = singlePassFunction
 computePipelineDescriptor.label = singlePassFunction.name
 let singlePassPipelineState = try! device.makeComputePipelineState(descriptor: computePipelineDescriptor, options: []).0
 
+func singlePass(run: Int, radius: Int, kernelSize: Int) -> RunStat {
+  var computeRadius: Int32 = Int32(radius)
+  var computeKernelSize: Int32 = Int32(kernelSize)
+  
+  let commandBuffer = commandQueue.makeCommandBuffer()!
+  commandBuffer.label = "Single Pass \(run)"
+  commandBuffer.enqueue()
+  
+  let computeCommandEncoder = commandBuffer.makeComputeCommandEncoder()!
+  computeCommandEncoder.setBytes(&computeRadius, length: MemoryLayout.stride(ofValue: computeRadius), index: 0)
+  computeCommandEncoder.setBytes(&computeKernelSize, length: MemoryLayout.stride(ofValue: computeKernelSize), index: 1)
+  computeCommandEncoder.label = "Single Pass \(run)"
+  computeCommandEncoder.setTexture(inputTexture, index: 0)
+  computeCommandEncoder.setTexture(outputTexture, index: 1)
+  computeCommandEncoder.setComputePipelineState(singlePassPipelineState)
+  computeCommandEncoder.dispatchThreads(
+    MTLSize(
+      width: inputTexture.width,
+      height: inputTexture.height,
+      depth: 1
+    ),
+    threadsPerThreadgroup: MTLSize(
+      width: singlePassPipelineState.threadExecutionWidth,
+      height: singlePassPipelineState.maxTotalThreadsPerThreadgroup / singlePassPipelineState.threadExecutionWidth,
+      depth: 1
+    )
+  )
+  computeCommandEncoder.endEncoding()
+  commandBuffer.commit()
+  commandBuffer.waitUntilCompleted()
+  
+  let startTime = commandBuffer.gpuStartTime
+  let endTime = commandBuffer.gpuEndTime
+  let elapsed = endTime - startTime
+  
+  return RunStat(
+    label: "single_pass",
+    radius: radius,
+    elapsedTime: elapsed
+  )
+}
+
 // MARK: Double Pass
 let doublePassHFunction = library.makeFunction(name: "box_blur_double_pass_h")!
 let doublePassVFunction = library.makeFunction(name: "box_blur_double_pass_v")!
@@ -149,17 +195,116 @@ computePipelineDescriptor.computeFunction = doublePassVFunction
 computePipelineDescriptor.label = doublePassVFunction.name
 let doublePassVPipelineState = try! device.makeComputePipelineState(descriptor: computePipelineDescriptor, options: []).0
 
+func doublePass(run: Int, radius: Int, kernelSize: Int) -> RunStat {
+  var computeRadius: Int32 = Int32(radius)
+  var computeKernelSize: Int32 = Int32(kernelSize)
+  
+  let commandBuffer = commandQueue.makeCommandBuffer()!
+  commandBuffer.label = "Double Pass \(run)"
+  commandBuffer.enqueue()
+  
+  let computeCommandEncoder = commandBuffer.makeComputeCommandEncoder()!
+  computeCommandEncoder.setBytes(&computeRadius, length: MemoryLayout.stride(ofValue: computeRadius), index: 0)
+  computeCommandEncoder.setBytes(&computeKernelSize, length: MemoryLayout.stride(ofValue: computeKernelSize), index: 1)
+  computeCommandEncoder.label = "Double Pass \(run)"
+  computeCommandEncoder.setTexture(inputTexture, index: 0)
+  computeCommandEncoder.setTexture(tempTexture, index: 1)
+  computeCommandEncoder.setComputePipelineState(doublePassHPipelineState)
+  computeCommandEncoder.dispatchThreads(
+    MTLSize(
+      width: inputTexture.width,
+      height: inputTexture.height,
+      depth: 1
+    ),
+    threadsPerThreadgroup: MTLSize(
+      width: singlePassPipelineState.threadExecutionWidth,
+      height: singlePassPipelineState.maxTotalThreadsPerThreadgroup / singlePassPipelineState.threadExecutionWidth,
+      depth: 1
+    )
+  )
+  computeCommandEncoder.setComputePipelineState(doublePassVPipelineState)
+  computeCommandEncoder.setTexture(tempTexture, index: 0)
+  computeCommandEncoder.setTexture(outputTexture, index: 1)
+  computeCommandEncoder.dispatchThreads(
+    MTLSize(
+      width: inputTexture.width,
+      height: inputTexture.height,
+      depth: 1
+    ),
+    threadsPerThreadgroup: MTLSize(
+      width: singlePassPipelineState.threadExecutionWidth,
+      height: singlePassPipelineState.maxTotalThreadsPerThreadgroup / singlePassPipelineState.threadExecutionWidth,
+      depth: 1
+    )
+  )
+  computeCommandEncoder.endEncoding()
+  commandBuffer.commit()
+  commandBuffer.waitUntilCompleted()
+  
+  let startTime = commandBuffer.gpuStartTime
+  let endTime = commandBuffer.gpuEndTime
+  let elapsed = endTime - startTime
+  
+  return RunStat(
+    label: "double_pass",
+    radius: radius,
+    elapsedTime: elapsed
+  )
+}
+
+func mpsImageBox(run: Int, radius: Int, mpsBoxFilter: MPSImageBox) -> RunStat {
+  let commandBuffer = commandQueue.makeCommandBuffer()!
+  commandBuffer.label = "MPSImageBox \(run)"
+  commandBuffer.enqueue()
+
+  mpsBoxFilter.encode(
+    commandBuffer: commandBuffer,
+    sourceTexture: inputTexture,
+    destinationTexture: outputTexture
+  )
+  commandBuffer.commit()
+  commandBuffer.waitUntilCompleted()
+  
+  let startTime = commandBuffer.gpuStartTime
+  let endTime = commandBuffer.gpuEndTime
+  let elapsed = endTime - startTime
+  
+  return RunStat(
+    label: "MPSImageBox",
+    radius: radius,
+    elapsedTime: elapsed
+  )
+}
+
+
 // MARK: Parameters
 let radii = 1 ... 63
 let runPerRadius = 10
 
 // MARK: Run
 
-var results = [String: [Int: [CFTimeInterval]]]()
+var runStats = [RunStat]()
+
+func writeRunStats() throws {
+  let statsUrl = Bundle.main.executableURL!.deletingLastPathComponent().appending(path: "stats.csv")
+  let header = "label;radius;time;\n"
+  
+  try header.write(to: statsUrl, atomically: true, encoding: .utf8)
+  
+  let fileHandle = try FileHandle(forWritingTo: statsUrl)
+  try fileHandle.seekToEnd()
+  
+  for runStat in runStats {
+    try fileHandle.write(contentsOf: runStat.csvString.data(using: .utf8)!)
+  }
+  
+  try fileHandle.close()
+  
+  print(statsUrl.absoluteString)
+}
 
 for radius in radii {
-  var computeRadius: Int32 = Int32(radius)
-  var kernelSize  = 2 * computeRadius + 1
+  let kernelSize  = 2 * radius + 1
   print("Radius \(radius) - \(kernelSize)x\(kernelSize)")
   
   let mpsBoxFilter = MPSImageBox(
@@ -171,135 +316,43 @@ for radius in radii {
   
   for run in 1 ... runPerRadius {
     print("Run \(run)...")
+    
     for (hboxPipelineState, vboxPipelineState) in zip(hboxPipelineStates, vboxPipelineStates) {
-      let label = hboxPipelineState.label!.split(separator: "_")[2...].joined(separator: "_")
-      let commandBuffer = commandQueue.makeCommandBuffer()!
-      commandBuffer.label = "Double Pass \(run) - \(label)"
-      commandBuffer.enqueue()
-      
-      let computeCommandEncoder = commandBuffer.makeComputeCommandEncoder()!
-      computeCommandEncoder.setBytes(&computeRadius, length: MemoryLayout<Int32>.stride, index: 0)
-      computeCommandEncoder.setBytes(&kernelSize, length: MemoryLayout<Int32>.stride, index: 1)
-      computeCommandEncoder.label = "HBox \(run) \(label)"
-      computeCommandEncoder.setTexture(inputTexture, index: 0)
-      computeCommandEncoder.setTexture(tempTexture, index: 1)
-      computeCommandEncoder.setComputePipelineState(hboxPipelineState)
-      computeCommandEncoder.dispatchThreads(
-        MTLSizeMake(inputTexture.height, 1, 1),
-        threadsPerThreadgroup: MTLSize(width: hboxPipelineState.threadExecutionWidth, height: 1, depth: 1)
+      runStats.append(
+        hvBox(
+          run: run,
+          radius: radius,
+          kernelSize: kernelSize,
+          hboxPipelineState: hboxPipelineState,
+          vboxPipelineState: vboxPipelineState
+        )
       )
-      computeCommandEncoder.label = "VBox \(run) \(label)"
-      computeCommandEncoder.setTexture(tempTexture, index: 0)
-      computeCommandEncoder.setTexture(outputTexture, index: 1)
-      computeCommandEncoder.setComputePipelineState(vboxPipelineState)
-      computeCommandEncoder.dispatchThreads(
-        MTLSizeMake(inputTexture.width, 1, 1),
-        threadsPerThreadgroup: MTLSize(width: vboxPipelineState.threadExecutionWidth, height: 1, depth: 1)
-      )
-      computeCommandEncoder.endEncoding()
-      
-      commandBuffer.commit()
-      commandBuffer.waitUntilCompleted()
-      
-      let startTime = commandBuffer.gpuStartTime
-      let endTime = commandBuffer.gpuEndTime
-      let elapsed = endTime - startTime
-      results[label, default: [:]][radius, default: []].append(elapsed)
     }
     
-    var commandBuffer = commandQueue.makeCommandBuffer()!
-    commandBuffer.label = "Single Pass \(run)"
-    commandBuffer.enqueue()
-    
-    var computeCommandEncoder = commandBuffer.makeComputeCommandEncoder()!
-    computeCommandEncoder.setBytes(&computeRadius, length: MemoryLayout<Int32>.stride, index: 0)
-    computeCommandEncoder.setBytes(&kernelSize, length: MemoryLayout<Int32>.stride, index: 1)
-    computeCommandEncoder.label = "Single Pass \(run)"
-    computeCommandEncoder.setTexture(inputTexture, index: 0)
-    computeCommandEncoder.setTexture(outputTexture, index: 1)
-    computeCommandEncoder.setComputePipelineState(singlePassPipelineState)
-    computeCommandEncoder.dispatchThreads(
-      MTLSize(
-        width: inputTexture.width,
-        height: inputTexture.height,
-        depth: 1
-      ),
-      threadsPerThreadgroup: MTLSize(
-        width: singlePassPipelineState.threadExecutionWidth,
-        height: singlePassPipelineState.maxTotalThreadsPerThreadgroup / singlePassPipelineState.threadExecutionWidth,
-        depth: 1
+    runStats.append(
+      singlePass(
+        run: run,
+        radius: radius,
+        kernelSize: kernelSize
       )
     )
-    computeCommandEncoder.endEncoding()
-    commandBuffer.commit()
-    commandBuffer.waitUntilCompleted()
     
-    var startTime = commandBuffer.gpuStartTime
-    var endTime = commandBuffer.gpuEndTime
-    var elapsed = endTime - startTime
-    results["single_pass", default: [:]][radius, default: []].append(elapsed)
-    
-    commandBuffer = commandQueue.makeCommandBuffer()!
-    commandBuffer.label = "Double Pass \(run)"
-    commandBuffer.enqueue()
-    
-    computeCommandEncoder = commandBuffer.makeComputeCommandEncoder()!
-    computeCommandEncoder.setBytes(&computeRadius, length: MemoryLayout<Int32>.stride, index: 0)
-    computeCommandEncoder.setBytes(&kernelSize, length: MemoryLayout<Int32>.stride, index: 1)
-    computeCommandEncoder.label = "Double Pass \(run)"
-    computeCommandEncoder.setTexture(inputTexture, index: 0)
-    computeCommandEncoder.setTexture(tempTexture, index: 1)
-    computeCommandEncoder.setComputePipelineState(doublePassHPipelineState)
-    computeCommandEncoder.dispatchThreads(
-      MTLSize(
-        width: inputTexture.width,
-        height: inputTexture.height,
-        depth: 1
-      ),
-      threadsPerThreadgroup: MTLSize(
-        width: singlePassPipelineState.threadExecutionWidth,
-        height: singlePassPipelineState.maxTotalThreadsPerThreadgroup / singlePassPipelineState.threadExecutionWidth,
-        depth: 1
+    runStats.append(
+      doublePass(
+        run: run,
+        radius: radius,
+        kernelSize: kernelSize
       )
     )
-    computeCommandEncoder.setTexture(tempTexture, index: 0)
-    computeCommandEncoder.setTexture(outputTexture, index: 1)
-    computeCommandEncoder.dispatchThreads(
-      MTLSize(
-        width: inputTexture.width,
-        height: inputTexture.height,
-        depth: 1
-      ),
-      threadsPerThreadgroup: MTLSize(
-        width: singlePassPipelineState.threadExecutionWidth,
-        height: singlePassPipelineState.maxTotalThreadsPerThreadgroup / singlePassPipelineState.threadExecutionWidth,
-        depth: 1
-      )
-    )
-    computeCommandEncoder.endEncoding()
-    commandBuffer.commit()
-    commandBuffer.waitUntilCompleted()
-    
-    startTime = commandBuffer.gpuStartTime
-    endTime = commandBuffer.gpuEndTime
-    elapsed = endTime - startTime
-    results["double_pass", default: [:]][radius, default: []].append(elapsed)
-    
-    commandBuffer = commandQueue.makeCommandBuffer()!
-    commandBuffer.label = "MPSImageBox"
-    commandBuffer.enqueue()
 
-    mpsBoxFilter.encode(
-      commandBuffer: commandBuffer,
-      sourceTexture: inputTexture,
-      destinationTexture: outputTexture
+    runStats.append(
+      mpsImageBox(
+        run: run,
+        radius: radius,
+        mpsBoxFilter: mpsBoxFilter
+      )
     )
-    commandBuffer.commit()
-    commandBuffer.waitUntilCompleted()
-    
-    startTime = commandBuffer.gpuStartTime
-    endTime = commandBuffer.gpuEndTime
-    elapsed = endTime - startTime
-    results["MPSImageBox", default: [:]][radius, default: []].append(elapsed)
   }
 }
+
+try! writeRunStats()
