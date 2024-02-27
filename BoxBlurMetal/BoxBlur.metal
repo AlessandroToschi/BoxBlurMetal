@@ -157,13 +157,39 @@ void box_blur_single_pass(texture2d<float, access::sample> input_texture [[ text
                           constant int& kernel_size [[ buffer(1) ]],
                           uint2 xy [[ thread_position_in_grid ]]) {
   float4 sum = 0.0f;
-  const float divider = 2.0f * kernel_size;
+  const float divider = kernel_size * kernel_size;
   for(int offsetY = -radius; offsetY <= radius; offsetY++) {
     for(int offsetX = -radius; offsetX <= radius; offsetX++) {
       sum += input_texture.sample(blur_sampler, float2(xy.x + offsetX, xy.y + offsetY));
     }
   }
   output_texture.write(sum / divider, xy);
+}
+
+[[ kernel ]]
+void box_blur_double_pass_h(texture2d<float, access::sample> input_texture [[ texture(0) ]],
+                            texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                            constant int& radius [[ buffer(0) ]],
+                            constant int& kernel_size [[ buffer(1) ]],
+                            uint2 xy [[ thread_position_in_grid ]]) {
+  float4 sum = 0.0f;
+  for(int offsetY = -radius; offsetY <= radius; offsetY++) {
+    sum += input_texture.sample(blur_sampler, float2(xy.x, xy.y + offsetY));
+  }
+  output_texture.write(sum / kernel_size, xy);
+}
+
+[[ kernel ]]
+void box_blur_double_pass_v(texture2d<float, access::sample> input_texture [[ texture(0) ]],
+                            texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                            constant int& radius [[ buffer(0) ]],
+                            constant int& kernel_size [[ buffer(1) ]],
+                            uint2 xy [[ thread_position_in_grid ]]) {
+  float4 sum = 0.0f;
+  for(int offsetX = -radius; offsetX <= radius; offsetX++) {
+    sum += input_texture.sample(blur_sampler, float2(xy.x + offsetX, xy.y));
+  }
+  output_texture.write(sum / kernel_size, xy);
 }
 
 [[ kernel ]]
