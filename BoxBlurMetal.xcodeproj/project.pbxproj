@@ -8,23 +8,28 @@
 
 /* Begin PBXBuildFile section */
 		189D8E8C2B8B9AB600F47227 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 189D8E8B2B8B9AB600F47227 /* main.swift */; };
+		189D8E942B8B9AE900F47227 /* IMG_5102.jpg in CopyFiles */ = {isa = PBXBuildFile; fileRef = 189D8E922B8B9AC500F47227 /* IMG_5102.jpg */; };
+		189D8E962B8B9B1100F47227 /* BoxBlur.metal in Sources */ = {isa = PBXBuildFile; fileRef = 189D8E952B8B9B1100F47227 /* BoxBlur.metal */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
 		189D8E862B8B9AB600F47227 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = /usr/share/man/man1/;
-			dstSubfolderSpec = 0;
+			buildActionMask = 12;
+			dstPath = "";
+			dstSubfolderSpec = 6;
 			files = (
+				189D8E942B8B9AE900F47227 /* IMG_5102.jpg in CopyFiles */,
 			);
-			runOnlyForDeploymentPostprocessing = 1;
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		189D8E882B8B9AB600F47227 /* BoxBlurMetal */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = BoxBlurMetal; sourceTree = BUILT_PRODUCTS_DIR; };
 		189D8E8B2B8B9AB600F47227 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		189D8E922B8B9AC500F47227 /* IMG_5102.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = IMG_5102.jpg; sourceTree = "<group>"; };
+		189D8E952B8B9B1100F47227 /* BoxBlur.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = BoxBlur.metal; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -58,8 +63,18 @@
 			isa = PBXGroup;
 			children = (
 				189D8E8B2B8B9AB600F47227 /* main.swift */,
+				189D8E932B8B9AC900F47227 /* Resources */,
+				189D8E952B8B9B1100F47227 /* BoxBlur.metal */,
 			);
 			path = BoxBlurMetal;
+			sourceTree = "<group>";
+		};
+		189D8E932B8B9AC900F47227 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				189D8E922B8B9AC500F47227 /* IMG_5102.jpg */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -120,6 +135,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				189D8E962B8B9B1100F47227 /* BoxBlur.metal in Sources */,
 				189D8E8C2B8B9AB600F47227 /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
