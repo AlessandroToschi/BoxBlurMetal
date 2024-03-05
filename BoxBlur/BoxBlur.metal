@@ -33,7 +33,7 @@ METAL_FUNC void hbox_blur(texture2d<T, access::sample> input_texture,
   }
   
   const int width = static_cast<int>(input_texture.get_width());
-
+  
   previousInput[0] = vec<T, 4>((T)0.0);
   for (int i = 1; i < N; i++) {
     previousInput[i] = input_texture.sample(blur_sampler, float2(-radius + i - 1, row));
@@ -167,6 +167,54 @@ void box_blur_single_pass(texture2d<float, access::sample> input_texture [[ text
 }
 
 [[ kernel ]]
+void box_blur_single_pass_linear(texture2d<float, access::sample> input_texture [[ texture(0) ]],
+                                 texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                                 constant int& radius [[ buffer(0) ]],
+                                 constant int& kernel_size [[ buffer(1) ]],
+                                 uint2 xy [[ thread_position_in_grid ]]) {
+  constexpr sampler linear_blur_sampler = sampler(coord::pixel, address::clamp_to_edge, filter::linear);
+  
+  float4 sum = 0.0f;
+  int count = 0;
+  
+  float2 uv = float2(xy) - (float)radius + 0.5f;
+  const float2 end = float2(xy) + (float)radius - 1.0f;
+  
+  while (uv.y < end.y) {
+    while (uv.x < end.x) {
+      sum += input_texture.sample(linear_blur_sampler, uv);
+      count++;
+      
+      uv.x += 2.0f;
+    }
+    
+    uv.x -= 0.5f;
+    
+    sum += input_texture.sample(linear_blur_sampler, uv);
+    count++;
+    
+    uv.x = xy.x - radius + 0.5f;
+    uv.y += 2.0f;
+  }
+  
+  uv.y -= 0.5f;
+  
+  while (uv.x < end.x) {
+    sum += input_texture.sample(linear_blur_sampler, uv);
+    count++;
+    
+    uv.x += 2.0f;
+  }
+  
+  uv.x -= 0.5f;
+  
+  sum += input_texture.sample(linear_blur_sampler, uv);
+  count++;
+  
+  output_texture.write(sum / count, xy);
+}
+
+[[ kernel ]]
 void box_blur_double_pass_h(texture2d<float, access::sample> input_texture [[ texture(0) ]],
                             texture2d<float, access::read_write> output_texture [[ texture(1) ]],
                             constant int& radius [[ buffer(0) ]],
@@ -190,6 +238,64 @@ void box_blur_double_pass_v(texture2d<float, access::sample> input_texture [[ te
     sum += input_texture.sample(blur_sampler, float2(xy.x, xy.y + offsetY));
   }
   output_texture.write(sum / kernel_size, xy);
+}
+
+[[ kernel ]]
+void box_blur_double_pass_h_linear(texture2d<float, access::sample> input_texture [[ texture(0) ]],
+                                   texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                                   constant int& radius [[ buffer(0) ]],
+                                   constant int& kernel_size [[ buffer(1) ]],
+                                   uint2 xy [[ thread_position_in_grid ]]) {
+  float4 sum = 0.0f;
+  
+  constexpr sampler linear_blur_sampler = sampler(coord::pixel, address::clamp_to_edge, filter::linear);
+  
+  float2 uv = float2(xy) - radius + 0.5f;
+  const float end = xy.x + radius - 1.0f;
+  int count = 0;
+  
+  while (uv.x < end) {
+    sum += input_texture.sample(linear_blur_sampler, uv);
+    count++;
+    
+    uv.x += 2.0f;
+  }
+  
+  uv.x -= 0.5f;
+  
+  sum += input_texture.sample(linear_blur_sampler, uv);
+  count++;
+  
+  output_texture.write(sum / count, xy);
+}
+
+[[ kernel ]]
+void box_blur_double_pass_v_linear(texture2d<float, access::sample> input_texture [[ texture(0) ]],
+                                   texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                                   constant int& radius [[ buffer(0) ]],
+                                   constant int& kernel_size [[ buffer(1) ]],
+                                   uint2 xy [[ thread_position_in_grid ]]) {
+  float4 sum = 0.0f;
+  
+  constexpr sampler linear_blur_sampler = sampler(coord::pixel, address::clamp_to_edge, filter::linear);
+  
+  float2 uv = float2(xy) - radius + 0.5f;
+  const float end = xy.y + radius - 1.0f;
+  int count = 0;
+  
+  while (uv.y < end) {
+    sum += input_texture.sample(linear_blur_sampler, uv);
+    count++;
+    
+    uv.y += 2.0f;
+  }
+  
+  uv.y -= 0.5f;
+  
+  sum += input_texture.sample(linear_blur_sampler, uv);
+  count++;
+  
+  output_texture.write(sum / count, xy);
 }
 
 [[ kernel ]]
@@ -281,10 +387,10 @@ void hbox_blur_x12(texture2d<float, access::sample> input_texture [[ texture(0) 
 
 [[ kernel ]]
 void hbox_blur_x12_h(texture2d<half, access::sample> input_texture [[ texture(0) ]],
-                        texture2d<half, access::read_write> output_texture [[ texture(1) ]],
-                        constant int& radius [[ buffer(0) ]],
-                        constant int& kernel_size [[ buffer(1) ]],
-                        uint row [[ thread_position_in_grid ]]) {
+                     texture2d<half, access::read_write> output_texture [[ texture(1) ]],
+                     constant int& radius [[ buffer(0) ]],
+                     constant int& kernel_size [[ buffer(1) ]],
+                     uint row [[ thread_position_in_grid ]]) {
   
   hbox_blur<12>(input_texture, output_texture, radius, kernel_size, row);
 }
@@ -292,143 +398,143 @@ void hbox_blur_x12_h(texture2d<half, access::sample> input_texture [[ texture(0)
 
 [[ kernel ]]
 void hbox_blur_x16(texture2d<float, access::sample> input_texture [[ texture(0) ]],
-                      texture2d<float, access::read_write> output_texture [[ texture(1) ]],
-                      constant int& radius [[ buffer(0) ]],
-                      constant int& kernel_size [[ buffer(1) ]],
-                      uint row [[ thread_position_in_grid ]]) {
+                   texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                   constant int& radius [[ buffer(0) ]],
+                   constant int& kernel_size [[ buffer(1) ]],
+                   uint row [[ thread_position_in_grid ]]) {
   
   hbox_blur<16>(input_texture, output_texture, radius, kernel_size, row);
 }
 
 [[ kernel ]]
 void hbox_blur_x16_h(texture2d<half, access::sample> input_texture [[ texture(0) ]],
-                      texture2d<half, access::read_write> output_texture [[ texture(1) ]],
-                      constant int& radius [[ buffer(0) ]],
-                      constant int& kernel_size [[ buffer(1) ]],
-                      uint row [[ thread_position_in_grid ]]) {
+                     texture2d<half, access::read_write> output_texture [[ texture(1) ]],
+                     constant int& radius [[ buffer(0) ]],
+                     constant int& kernel_size [[ buffer(1) ]],
+                     uint row [[ thread_position_in_grid ]]) {
   
   hbox_blur<16>(input_texture, output_texture, radius, kernel_size, row);
 }
 
 [[ kernel ]]
 void hbox_blur_x24(texture2d<float, access::sample> input_texture [[ texture(0) ]],
-                      texture2d<float, access::read_write> output_texture [[ texture(1) ]],
-                      constant int& radius [[ buffer(0) ]],
-                      constant int& kernel_size [[ buffer(1) ]],
-                      uint row [[ thread_position_in_grid ]]) {
+                   texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                   constant int& radius [[ buffer(0) ]],
+                   constant int& kernel_size [[ buffer(1) ]],
+                   uint row [[ thread_position_in_grid ]]) {
   
   hbox_blur<24>(input_texture, output_texture, radius, kernel_size, row);
 }
 
 [[ kernel ]]
 void hbox_blur_x24_h(texture2d<half, access::sample> input_texture [[ texture(0) ]],
-                      texture2d<half, access::read_write> output_texture [[ texture(1) ]],
-                      constant int& radius [[ buffer(0) ]],
-                      constant int& kernel_size [[ buffer(1) ]],
-                      uint row [[ thread_position_in_grid ]]) {
+                     texture2d<half, access::read_write> output_texture [[ texture(1) ]],
+                     constant int& radius [[ buffer(0) ]],
+                     constant int& kernel_size [[ buffer(1) ]],
+                     uint row [[ thread_position_in_grid ]]) {
   
   hbox_blur<24>(input_texture, output_texture, radius, kernel_size, row);
 }
 
 [[ kernel ]]
 void hbox_blur_x32(texture2d<float, access::sample> input_texture [[ texture(0) ]],
-                      texture2d<float, access::read_write> output_texture [[ texture(1) ]],
-                      constant int& radius [[ buffer(0) ]],
-                      constant int& kernel_size [[ buffer(1) ]],
-                      uint row [[ thread_position_in_grid ]]) {
+                   texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                   constant int& radius [[ buffer(0) ]],
+                   constant int& kernel_size [[ buffer(1) ]],
+                   uint row [[ thread_position_in_grid ]]) {
   
   hbox_blur<32>(input_texture, output_texture, radius, kernel_size, row);
 }
 
 [[ kernel ]]
 void hbox_blur_x32_h(texture2d<half, access::sample> input_texture [[ texture(0) ]],
-                      texture2d<half, access::read_write> output_texture [[ texture(1) ]],
-                      constant int& radius [[ buffer(0) ]],
-                      constant int& kernel_size [[ buffer(1) ]],
-                      uint row [[ thread_position_in_grid ]]) {
+                     texture2d<half, access::read_write> output_texture [[ texture(1) ]],
+                     constant int& radius [[ buffer(0) ]],
+                     constant int& kernel_size [[ buffer(1) ]],
+                     uint row [[ thread_position_in_grid ]]) {
   
   hbox_blur<32>(input_texture, output_texture, radius, kernel_size, row);
 }
 
 [[ kernel ]]
 void vbox_blur_x1(texture2d<float, access::sample> input_texture [[ texture(0) ]],
-                     texture2d<float, access::read_write> output_texture [[ texture(1) ]],
-                     constant int& radius [[ buffer(0) ]],
-                     constant int& kernel_size [[ buffer(1) ]],
+                  texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                  constant int& radius [[ buffer(0) ]],
+                  constant int& kernel_size [[ buffer(1) ]],
                   uint column [[ thread_position_in_grid ]]) {
   vbox_blur<1>(input_texture, output_texture, radius, kernel_size, column);
 }
 
 [[ kernel ]]
 void vbox_blur_x1_h(texture2d<half, access::sample> input_texture [[ texture(0) ]],
-                     texture2d<half, access::read_write> output_texture [[ texture(1) ]],
-                     constant int& radius [[ buffer(0) ]],
-                     constant int& kernel_size [[ buffer(1) ]],
-                  uint column [[ thread_position_in_grid ]]) {
+                    texture2d<half, access::read_write> output_texture [[ texture(1) ]],
+                    constant int& radius [[ buffer(0) ]],
+                    constant int& kernel_size [[ buffer(1) ]],
+                    uint column [[ thread_position_in_grid ]]) {
   vbox_blur<1>(input_texture, output_texture, radius, kernel_size, column);
 }
 
 [[ kernel ]]
 void vbox_blur_x2(texture2d<float, access::sample> input_texture [[ texture(0) ]],
-                     texture2d<float, access::read_write> output_texture [[ texture(1) ]],
-                     constant int& radius [[ buffer(0) ]],
-                     constant int& kernel_size [[ buffer(1) ]],
+                  texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                  constant int& radius [[ buffer(0) ]],
+                  constant int& kernel_size [[ buffer(1) ]],
                   uint column [[ thread_position_in_grid ]]) {
   vbox_blur<2>(input_texture, output_texture, radius, kernel_size, column);
 }
 
 [[ kernel ]]
 void vbox_blur_x2_h(texture2d<half, access::sample> input_texture [[ texture(0) ]],
-                     texture2d<half, access::read_write> output_texture [[ texture(1) ]],
-                     constant int& radius [[ buffer(0) ]],
-                     constant int& kernel_size [[ buffer(1) ]],
-                  uint column [[ thread_position_in_grid ]]) {
+                    texture2d<half, access::read_write> output_texture [[ texture(1) ]],
+                    constant int& radius [[ buffer(0) ]],
+                    constant int& kernel_size [[ buffer(1) ]],
+                    uint column [[ thread_position_in_grid ]]) {
   vbox_blur<2>(input_texture, output_texture, radius, kernel_size, column);
 }
 
 [[ kernel ]]
 void vbox_blur_x4(texture2d<float, access::sample> input_texture [[ texture(0) ]],
-                     texture2d<float, access::read_write> output_texture [[ texture(1) ]],
-                     constant int& radius [[ buffer(0) ]],
-                     constant int& kernel_size [[ buffer(1) ]],
+                  texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                  constant int& radius [[ buffer(0) ]],
+                  constant int& kernel_size [[ buffer(1) ]],
                   uint column [[ thread_position_in_grid ]]) {
   vbox_blur<4>(input_texture, output_texture, radius, kernel_size, column);
 }
 
 [[ kernel ]]
 void vbox_blur_x4_h(texture2d<half, access::sample> input_texture [[ texture(0) ]],
-                     texture2d<half, access::read_write> output_texture [[ texture(1) ]],
-                     constant int& radius [[ buffer(0) ]],
-                     constant int& kernel_size [[ buffer(1) ]],
-                  uint column [[ thread_position_in_grid ]]) {
+                    texture2d<half, access::read_write> output_texture [[ texture(1) ]],
+                    constant int& radius [[ buffer(0) ]],
+                    constant int& kernel_size [[ buffer(1) ]],
+                    uint column [[ thread_position_in_grid ]]) {
   vbox_blur<4>(input_texture, output_texture, radius, kernel_size, column);
 }
 
 
 [[ kernel ]]
 void vbox_blur_x8(texture2d<float, access::sample> input_texture [[ texture(0) ]],
-                     texture2d<float, access::read_write> output_texture [[ texture(1) ]],
-                     constant int& radius [[ buffer(0) ]],
-                     constant int& kernel_size [[ buffer(1) ]],
+                  texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                  constant int& radius [[ buffer(0) ]],
+                  constant int& kernel_size [[ buffer(1) ]],
                   uint column [[ thread_position_in_grid ]]) {
   vbox_blur<8>(input_texture, output_texture, radius, kernel_size, column);
 }
 
 [[ kernel ]]
 void vbox_blur_x8_h(texture2d<half, access::sample> input_texture [[ texture(0) ]],
-                     texture2d<half, access::read_write> output_texture [[ texture(1) ]],
-                     constant int& radius [[ buffer(0) ]],
-                     constant int& kernel_size [[ buffer(1) ]],
-                  uint column [[ thread_position_in_grid ]]) {
+                    texture2d<half, access::read_write> output_texture [[ texture(1) ]],
+                    constant int& radius [[ buffer(0) ]],
+                    constant int& kernel_size [[ buffer(1) ]],
+                    uint column [[ thread_position_in_grid ]]) {
   vbox_blur<8>(input_texture, output_texture, radius, kernel_size, column);
 }
 
 [[ kernel ]]
 void vbox_blur_x12(texture2d<float, access::sample> input_texture [[ texture(0) ]],
-                     texture2d<float, access::read_write> output_texture [[ texture(1) ]],
-                     constant int& radius [[ buffer(0) ]],
-                     constant int& kernel_size [[ buffer(1) ]],
-                  uint column [[ thread_position_in_grid ]]) {
+                   texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                   constant int& radius [[ buffer(0) ]],
+                   constant int& kernel_size [[ buffer(1) ]],
+                   uint column [[ thread_position_in_grid ]]) {
   vbox_blur<12>(input_texture, output_texture, radius, kernel_size, column);
 }
 
@@ -437,16 +543,16 @@ void vbox_blur_x12_h(texture2d<half, access::sample> input_texture [[ texture(0)
                      texture2d<half, access::read_write> output_texture [[ texture(1) ]],
                      constant int& radius [[ buffer(0) ]],
                      constant int& kernel_size [[ buffer(1) ]],
-                  uint column [[ thread_position_in_grid ]]) {
+                     uint column [[ thread_position_in_grid ]]) {
   vbox_blur<12>(input_texture, output_texture, radius, kernel_size, column);
 }
 
 [[ kernel ]]
 void vbox_blur_x16(texture2d<float, access::sample> input_texture [[ texture(0) ]],
-                     texture2d<float, access::read_write> output_texture [[ texture(1) ]],
-                     constant int& radius [[ buffer(0) ]],
-                     constant int& kernel_size [[ buffer(1) ]],
-                  uint column [[ thread_position_in_grid ]]) {
+                   texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                   constant int& radius [[ buffer(0) ]],
+                   constant int& kernel_size [[ buffer(1) ]],
+                   uint column [[ thread_position_in_grid ]]) {
   vbox_blur<16>(input_texture, output_texture, radius, kernel_size, column);
 }
 
@@ -455,16 +561,16 @@ void vbox_blur_x16_h(texture2d<half, access::sample> input_texture [[ texture(0)
                      texture2d<half, access::read_write> output_texture [[ texture(1) ]],
                      constant int& radius [[ buffer(0) ]],
                      constant int& kernel_size [[ buffer(1) ]],
-                  uint column [[ thread_position_in_grid ]]) {
+                     uint column [[ thread_position_in_grid ]]) {
   vbox_blur<16>(input_texture, output_texture, radius, kernel_size, column);
 }
 
 [[ kernel ]]
 void vbox_blur_x24(texture2d<float, access::sample> input_texture [[ texture(0) ]],
-                     texture2d<float, access::read_write> output_texture [[ texture(1) ]],
-                     constant int& radius [[ buffer(0) ]],
-                     constant int& kernel_size [[ buffer(1) ]],
-                  uint column [[ thread_position_in_grid ]]) {
+                   texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                   constant int& radius [[ buffer(0) ]],
+                   constant int& kernel_size [[ buffer(1) ]],
+                   uint column [[ thread_position_in_grid ]]) {
   vbox_blur<24>(input_texture, output_texture, radius, kernel_size, column);
 }
 
@@ -473,16 +579,16 @@ void vbox_blur_x24_h(texture2d<half, access::sample> input_texture [[ texture(0)
                      texture2d<half, access::read_write> output_texture [[ texture(1) ]],
                      constant int& radius [[ buffer(0) ]],
                      constant int& kernel_size [[ buffer(1) ]],
-                  uint column [[ thread_position_in_grid ]]) {
+                     uint column [[ thread_position_in_grid ]]) {
   vbox_blur<24>(input_texture, output_texture, radius, kernel_size, column);
 }
 
 [[ kernel ]]
 void vbox_blur_x32(texture2d<float, access::sample> input_texture [[ texture(0) ]],
-                     texture2d<float, access::read_write> output_texture [[ texture(1) ]],
-                     constant int& radius [[ buffer(0) ]],
-                     constant int& kernel_size [[ buffer(1) ]],
-                  uint column [[ thread_position_in_grid ]]) {
+                   texture2d<float, access::read_write> output_texture [[ texture(1) ]],
+                   constant int& radius [[ buffer(0) ]],
+                   constant int& kernel_size [[ buffer(1) ]],
+                   uint column [[ thread_position_in_grid ]]) {
   vbox_blur<32>(input_texture, output_texture, radius, kernel_size, column);
 }
 
@@ -491,6 +597,6 @@ void vbox_blur_x32_h(texture2d<half, access::sample> input_texture [[ texture(0)
                      texture2d<half, access::read_write> output_texture [[ texture(1) ]],
                      constant int& radius [[ buffer(0) ]],
                      constant int& kernel_size [[ buffer(1) ]],
-                  uint column [[ thread_position_in_grid ]]) {
+                     uint column [[ thread_position_in_grid ]]) {
   vbox_blur<32>(input_texture, output_texture, radius, kernel_size, column);
 }

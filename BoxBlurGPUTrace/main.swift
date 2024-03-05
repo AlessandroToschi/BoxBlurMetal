@@ -90,6 +90,48 @@ do {
   print(gpuTraceUrl.absoluteString)
 }
 
+do {
+  let gpuTraceUrl = Bundle.main.executableURL!.deletingLastPathComponent().appending(path: "DoublePassLinear.gputrace")
+  
+  if FileManager.default.fileExists(atPath: gpuTraceUrl.path(percentEncoded: false)) {
+    try! FileManager.default.removeItem(at: gpuTraceUrl)
+  }
+  
+  let captureDescriptor = MTLCaptureDescriptor()
+  captureDescriptor.captureObject = commandQueue
+  captureDescriptor.destination = .gpuTraceDocument
+  captureDescriptor.outputURL = gpuTraceUrl
+  
+  let captureManager = MTLCaptureManager.shared()
+  try! captureManager.startCapture(with: captureDescriptor)
+  
+  let boxBlur = BoxBlur(
+    radius: radius,
+    device: device,
+    intermediaTexturePixelFormat: .rgba32
+  )
+  boxBlur.load()
+  
+  for run in 1 ... runs {
+    let commandBuffer = commandQueue.makeCommandBuffer()!
+    commandBuffer.label = "Run \(run)"
+    commandBuffer.enqueue()
+    
+    boxBlur.doublePassLinear(
+      commandBuffer: commandBuffer,
+      inputTexture: inputTexture,
+      outputTexture: outputTexture
+    )
+    
+    commandBuffer.commit()
+    commandBuffer.waitUntilCompleted()
+  }
+  
+  captureManager.stopCapture()
+  
+  print(gpuTraceUrl.absoluteString)
+}
+
 for pixelFormat in BoxBlur.PixelFormat.allCases {
   let gpuTraceUrl = Bundle.main.executableURL!.deletingLastPathComponent().appending(path: "GPUTrace\(pixelFormat).gputrace")
   

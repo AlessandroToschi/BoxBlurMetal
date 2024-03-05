@@ -37,8 +37,11 @@ public class BoxBlur {
   private var hboxPipelineStates: [ItemsPerKernel: MTLComputePipelineState]!
   private var vboxPipelineStates: [ItemsPerKernel: MTLComputePipelineState]!
   private var singlePassPipelineState: MTLComputePipelineState!
+  private var singlePassLinearPipelineState: MTLComputePipelineState!
   private var doublePassHPipelineState: MTLComputePipelineState!
   private var doublePassVPipelineState: MTLComputePipelineState!
+  private var doublePassHLinearPipelineState: MTLComputePipelineState!
+  private var doublePassVLinearPipelineState: MTLComputePipelineState!
   private var mpsImageBox: MPSImageBox!
   private var intermediateTexture: MTLTexture?
   
@@ -62,8 +65,8 @@ public class BoxBlur {
     self.vboxPipelineStates = [:]
     
     for itemsPerKernel in ItemsPerKernel.allCases {
-      let hFunctionNames = ["hbox_blur_x\(itemsPerKernel.rawValue)", "hbox_blur_x\(itemsPerKernel.rawValue)_h"]
-      let vFunctionNames = ["vbox_blur_x\(itemsPerKernel.rawValue)", "vbox_blur_x\(itemsPerKernel.rawValue)_h"]
+      let hFunctionNames = ["hbox_blur_x\(itemsPerKernel.rawValue)"]
+      let vFunctionNames = ["vbox_blur_x\(itemsPerKernel.rawValue)"]
       
       for hFunctionName in hFunctionNames {
         let function = library.makeFunction(name: hFunctionName)!
@@ -95,6 +98,11 @@ public class BoxBlur {
     computePipelineDescriptor.label = singlePassFunction.name
     self.singlePassPipelineState = try! device.makeComputePipelineState(descriptor: computePipelineDescriptor, options: []).0
     
+    let singlePassLinearFunction = library.makeFunction(name: "box_blur_single_pass_linear")!
+    computePipelineDescriptor.computeFunction = singlePassLinearFunction
+    computePipelineDescriptor.label = singlePassLinearFunction.name
+    self.singlePassLinearPipelineState = try! device.makeComputePipelineState(descriptor: computePipelineDescriptor, options: []).0
+    
     let doublePassHFunction = library.makeFunction(name: "box_blur_double_pass_h")!
     let doublePassVFunction = library.makeFunction(name: "box_blur_double_pass_v")!
     
@@ -105,6 +113,17 @@ public class BoxBlur {
     computePipelineDescriptor.computeFunction = doublePassVFunction
     computePipelineDescriptor.label = doublePassVFunction.name
     self.doublePassVPipelineState = try! device.makeComputePipelineState(descriptor: computePipelineDescriptor, options: []).0
+    
+    let doublePassHLinearFunction = library.makeFunction(name: "box_blur_double_pass_h_linear")!
+    let doublePassVLinearFunction = library.makeFunction(name: "box_blur_double_pass_v_linear")!
+    
+    computePipelineDescriptor.computeFunction = doublePassHLinearFunction
+    computePipelineDescriptor.label = doublePassHLinearFunction.name
+    self.doublePassHLinearPipelineState = try! device.makeComputePipelineState(descriptor: computePipelineDescriptor, options: []).0
+    
+    computePipelineDescriptor.computeFunction = doublePassVLinearFunction
+    computePipelineDescriptor.label = doublePassVLinearFunction.name
+    self.doublePassVLinearPipelineState = try! device.makeComputePipelineState(descriptor: computePipelineDescriptor, options: []).0
     
     self.mpsImageBox = MPSImageBox(
       device: self.device,
@@ -167,6 +186,36 @@ public class BoxBlur {
     computeCommandEncoder.endEncoding()
   }
   
+  public func singlePassLinear(
+    commandBuffer: MTLCommandBuffer,
+    inputTexture: MTLTexture,
+    outputTexture: MTLTexture
+  ) {
+    var computeRadius: Int32 = Int32(self.radius)
+    var computeKernelSize: Int32 = Int32(self.kernelSize)
+    
+    let computeCommandEncoder = commandBuffer.makeComputeCommandEncoder()!
+    computeCommandEncoder.label = self.singlePassLinearPipelineState.label
+    computeCommandEncoder.setComputePipelineState(self.singlePassLinearPipelineState)
+    computeCommandEncoder.setTexture(inputTexture, index: 0)
+    computeCommandEncoder.setTexture(outputTexture, index: 1)
+    computeCommandEncoder.setBytes(&computeRadius, length: MemoryLayout.stride(ofValue: computeRadius), index: 0)
+    computeCommandEncoder.setBytes(&computeKernelSize, length: MemoryLayout.stride(ofValue: computeKernelSize), index: 1)
+    computeCommandEncoder.dispatchThreads(
+      MTLSize(
+        width: inputTexture.width,
+        height: inputTexture.height,
+        depth: 1
+      ),
+      threadsPerThreadgroup: MTLSize(
+        width: singlePassLinearPipelineState.threadExecutionWidth,
+        height: singlePassLinearPipelineState.maxTotalThreadsPerThreadgroup / singlePassPipelineState.threadExecutionWidth,
+        depth: 1
+      )
+    )
+    computeCommandEncoder.endEncoding()
+  }
+  
   public func doublePass(
     commandBuffer: MTLCommandBuffer,
     inputTexture: MTLTexture,
@@ -205,6 +254,53 @@ public class BoxBlur {
     )
     computeCommandEncoder.label = self.doublePassVPipelineState.label
     computeCommandEncoder.setComputePipelineState(self.doublePassVPipelineState)
+    computeCommandEncoder.setTexture(self.intermediateTexture, index: 0)
+    computeCommandEncoder.setTexture(outputTexture, index: 1)
+    computeCommandEncoder.dispatchThreads(
+      threasPerGrid,
+      threadsPerThreadgroup: threadsPerThreadgroup
+    )
+    computeCommandEncoder.endEncoding()
+  }
+  
+  public func doublePassLinear(
+    commandBuffer: MTLCommandBuffer,
+    inputTexture: MTLTexture,
+    outputTexture: MTLTexture
+  ) {
+    var computeRadius: Int32 = Int32(self.radius)
+    var computeKernelSize: Int32 = Int32(self.kernelSize)
+    
+    self.createIntermediateTextureIfNeeded(
+      width: inputTexture.width,
+      height: inputTexture.height
+    )
+    
+    let threasPerGrid = MTLSize(
+      width: inputTexture.width,
+      height: inputTexture.height,
+      depth: 1
+    )
+    
+    let threadsPerThreadgroup = MTLSize(
+      width: doublePassHLinearPipelineState.threadExecutionWidth,
+      height: doublePassHLinearPipelineState.maxTotalThreadsPerThreadgroup / doublePassHLinearPipelineState.threadExecutionWidth,
+      depth: 1
+    )
+    
+    let computeCommandEncoder = commandBuffer.makeComputeCommandEncoder()!
+    computeCommandEncoder.label = self.doublePassHLinearPipelineState.label
+    computeCommandEncoder.setComputePipelineState(self.doublePassHLinearPipelineState)
+    computeCommandEncoder.setTexture(inputTexture, index: 0)
+    computeCommandEncoder.setTexture(self.intermediateTexture, index: 1)
+    computeCommandEncoder.setBytes(&computeRadius, length: MemoryLayout.stride(ofValue: computeRadius), index: 0)
+    computeCommandEncoder.setBytes(&computeKernelSize, length: MemoryLayout.stride(ofValue: computeKernelSize), index: 1)
+    computeCommandEncoder.dispatchThreads(
+      threasPerGrid,
+      threadsPerThreadgroup: threadsPerThreadgroup
+    )
+    computeCommandEncoder.label = self.doublePassVLinearPipelineState.label
+    computeCommandEncoder.setComputePipelineState(self.doublePassVLinearPipelineState)
     computeCommandEncoder.setTexture(self.intermediateTexture, index: 0)
     computeCommandEncoder.setTexture(outputTexture, index: 1)
     computeCommandEncoder.dispatchThreads(

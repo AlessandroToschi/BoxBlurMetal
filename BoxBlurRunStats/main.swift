@@ -19,6 +19,21 @@ extension BoxBlur.PixelFormat: CustomStringConvertible {
   }
 }
 
+extension BoxBlur.ItemsPerKernel: CustomStringConvertible {
+  public var description: String {
+    switch self {
+      case .one: "1"
+      case .two: "2"
+      case .four: "4"
+      case .eight: "8"
+      case .twelve: "12"
+      case .sixteen: "16"
+      case .twentyfour: "24"
+      case .thirtytwo: "32"
+    }
+  }
+}
+
 struct RunStat: Hashable, Equatable {
   let label: String
   let radius: Int
@@ -34,8 +49,8 @@ struct RunStat: Hashable, Equatable {
   }
 }
 
-func writeRunStats() throws {
-  let statsUrl = Bundle.main.executableURL!.deletingLastPathComponent().appending(path: "stats.csv")
+func writeRunStats(runStats: [RunStat], filename: String = "stats") throws {
+  let statsUrl = Bundle.main.executableURL!.deletingLastPathComponent().appending(path: "\(filename).csv")
   try RunStat.csvHeader.write(to: statsUrl, atomically: true, encoding: .utf8)
   
   let fileHandle = try FileHandle(forWritingTo: statsUrl)
@@ -88,11 +103,12 @@ func encodeInCommandBuffer(label: String, callback: (MTLCommandBuffer) -> ()) ->
   return commandBuffer.gpuEndTime - commandBuffer.gpuStartTime
 }
 
-var runStats = [RunStat]()
-
-for pixelFormat in BoxBlur.PixelFormat.allCases {
+func singlePass() {
+  // Not relevant for the single pass.
+  let pixelFormat = BoxBlur.PixelFormat.rgba8
+  var stats = [RunStat]()
   for radius in radii {
-    print("Radius: \(radius) - PixelFormat: \(pixelFormat)")
+    print("Radius: \(radius)")
     let boxBlur = BoxBlur(
       radius: radius,
       device: device,
@@ -101,7 +117,7 @@ for pixelFormat in BoxBlur.PixelFormat.allCases {
     boxBlur.load()
     for run in 1 ... runsPerRadius {
       print("Run \(run)...")
-      runStats.append(
+      stats.append(
         RunStat(
           label: "single_pass",
           radius: radius,
@@ -116,19 +132,56 @@ for pixelFormat in BoxBlur.PixelFormat.allCases {
               )
             }
           ),
-          pixelFormat: pixelFormat
+          pixelFormat:  pixelFormat
         )
       )
       
-      runStats.append(
+      stats.append(
         RunStat(
-          label: "double_pass",
+          label: "single_pass_linear",
           radius: radius,
           elapsedTime: encodeInCommandBuffer(
-            label: "double_pass",
+            label: "single_pass_linear",
             callback: {
               commandBuffer in
-              boxBlur.doublePass(
+              boxBlur.singlePassLinear(
+                commandBuffer: commandBuffer,
+                inputTexture: inputTexture,
+                outputTexture: outputTexture
+              )
+            }
+          ),
+          pixelFormat: pixelFormat
+        )
+      )
+    }
+  }
+  try! writeRunStats(runStats: stats, filename: "single_pass")
+}
+
+var runStats = [RunStat]()
+
+for pixelFormat in BoxBlur.PixelFormat.allCases {
+  for radius in radii {
+    print("Radius: \(radius) - PixelFormat: \(pixelFormat)")
+    let boxBlur = BoxBlur(
+      radius: radius,
+      device: device,
+      intermediaTexturePixelFormat: pixelFormat
+    )
+    boxBlur.load()
+    for run in 1 ... runsPerRadius {
+      print("Run \(run)...")
+      
+      runStats.append(
+        RunStat(
+          label: "MPS",
+          radius: radius,
+          elapsedTime: encodeInCommandBuffer(
+            label: "MPS",
+            callback: {
+              commandBuffer in
+              boxBlur.mps(
                 commandBuffer: commandBuffer,
                 inputTexture: inputTexture,
                 outputTexture: outputTexture
@@ -164,13 +217,13 @@ for pixelFormat in BoxBlur.PixelFormat.allCases {
       
       runStats.append(
         RunStat(
-          label: "MPS",
+          label: "single_pass",
           radius: radius,
           elapsedTime: encodeInCommandBuffer(
-            label: "MPS",
+            label: "single_pass",
             callback: {
               commandBuffer in
-              boxBlur.mps(
+              boxBlur.singlePass(
                 commandBuffer: commandBuffer,
                 inputTexture: inputTexture,
                 outputTexture: outputTexture
@@ -180,8 +233,68 @@ for pixelFormat in BoxBlur.PixelFormat.allCases {
           pixelFormat: pixelFormat
         )
       )
+      
+      runStats.append(
+        RunStat(
+          label: "single_pass_linear",
+          radius: radius,
+          elapsedTime: encodeInCommandBuffer(
+            label: "single_pass_linear",
+            callback: {
+              commandBuffer in
+              boxBlur.singlePassLinear(
+                commandBuffer: commandBuffer,
+                inputTexture: inputTexture,
+                outputTexture: outputTexture
+              )
+            }
+          ),
+          pixelFormat: pixelFormat
+        )
+      )
+      
+      
+      runStats.append(
+        RunStat(
+          label: "double_pass",
+          radius: radius,
+          elapsedTime: encodeInCommandBuffer(
+            label: "double_pass",
+            callback: {
+              commandBuffer in
+              boxBlur.doublePass(
+                commandBuffer: commandBuffer,
+                inputTexture: inputTexture,
+                outputTexture: outputTexture
+              )
+            }
+          ),
+          pixelFormat: pixelFormat
+        )
+      )
+      
+      runStats.append(
+        RunStat(
+          label: "double_pass_linear",
+          radius: radius,
+          elapsedTime: encodeInCommandBuffer(
+            label: "double_pass_linear",
+            callback: {
+              commandBuffer in
+              boxBlur.doublePassLinear(
+                commandBuffer: commandBuffer,
+                inputTexture: inputTexture,
+                outputTexture: outputTexture
+              )
+            }
+          ),
+          pixelFormat: pixelFormat
+        )
+      )
+      
+      Thread.sleep(forTimeInterval: 0.050)
     }
   }
 }
 
-try! writeRunStats()
+try! writeRunStats(runStats: runStats)
